@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>รวมไฟล์ PDF และรูปภาพ (ขนาด A4)</title>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #f4f7f6; 
+            display: flex; justify-content: center; align-items: center; 
+            min-height: 100vh; margin: 0; padding: 20px;
+        }
+        .container { 
+            background-color: white; padding: 30px; border-radius: 12px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 500px; 
+            text-align: center; 
+        }
+        h2 { color: #333; margin-top: 0; }
+        .file-input-wrapper { margin: 20px 0; border: 2px dashed #ccc; padding: 20px; border-radius: 8px; }
+        input[type="file"] { width: 100%; cursor: pointer; }
+        button { 
+            background-color: #007bff; color: white; border: none; padding: 12px 20px; 
+            border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;
+            width: 100%; transition: background 0.3s; 
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #status { margin-top: 15px; font-weight: bold; font-size: 14px; }
+        .file-list { 
+            text-align: left; margin-bottom: 20px; font-size: 14px; color: #555; 
+            max-height: 150px; overflow-y: auto; background: #f9f9f9; padding: 10px; border-radius: 6px;
+            display: none;
+        }
+        ul { margin: 0; padding-left: 20px; }
+        li { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>รวมไฟล์ PDF และรูปภาพ 📄🖼️</h2>
+    <p style="color: #666; font-size: 14px; margin-bottom: 20px;">รูปภาพจะถูกจัดให้อยู่ในหน้า A4 อัตโนมัติ เพื่อให้ขนาดไฟล์เท่ากัน รองรับทุกสกุลไฟล์</p>
+    
+    <div class="file-input-wrapper">
+        <input type="file" id="fileInput" accept="application/pdf, image/jpeg, image/png" multiple>
+    </div>
+
+    <div class="file-list" id="fileList"></div>
+
+    <button id="mergeBtn">รวมไฟล์และดาวน์โหลด</button>
+    <div id="status"></div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const mergeBtn = document.getElementById('mergeBtn');
+    const statusDiv = document.getElementById('status');
+
+    fileInput.addEventListener('change', () => {
+        const files = fileInput.files;
+        if (files.length > 0) {
+            let listHtml = '<p style="margin-top:0; font-weight:bold;">ไฟล์ที่เลือก:</p><ul>';
+            for (let i = 0; i < files.length; i++) {
+                listHtml += `<li>${files[i].name}</li>`;
+            }
+            listHtml += '</ul>';
+            fileList.innerHTML = listHtml;
+            fileList.style.display = 'block';
+            statusDiv.textContent = '';
+        } else {
+            fileList.style.display = 'none';
+        }
+    });
+
+    mergeBtn.addEventListener('click', async () => {
+        const files = fileInput.files;
+
+        if (files.length < 2) {
+            alert('กรุณาเลือกไฟล์อย่างน้อย 2 ไฟล์ขึ้นไป');
+            return;
+        }
+
+        try {
+            mergeBtn.disabled = true;
+            statusDiv.style.color = '#007bff';
+            statusDiv.textContent = 'กำลังจัดหน้าและรวมไฟล์... รอหน่อยคนอ้วน';
+
+            const { PDFDocument } = window.PDFLib;
+            const mergedPdf = await PDFDocument.create();
+            
+            const A4_WIDTH = 595.28;
+            const A4_HEIGHT = 841.89;
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const arrayBuffer = await file.arrayBuffer();
+
+                if (file.type === 'application/pdf') {
+                    // ถ้าเป็น PDF เดิม ก็เอามาต่อปกติ (รักษาสัดส่วนเดิมของ PDF นั้นไว้)
+                    const pdf = await PDFDocument.load(arrayBuffer);
+                    const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+                    copiedPages.forEach((page) => mergedPdf.addPage(page));
+                    
+                } else if (file.type === 'image/jpeg' || file.type === 'image/png') {
+                    // ถ้าเป็นรูปภาพ
+                    let image;
+                    if (file.type === 'image/jpeg') {
+                        image = await mergedPdf.embedJpg(arrayBuffer);
+                    } else {
+                        image = await mergedPdf.embedPng(arrayBuffer);
+                    }
+
+                    // ดึงขนาดความกว้าง/สูงดั้งเดิมของรูปภาพ
+                    const imageDims = image.scale(1);
+                    
+                    // คำนวณหาอัตราส่วน (Scale) เพื่อให้รูปพอดีกับ A4 โดยไม่ล้นกระดาษ
+                    // หักขอบออกนิดหน่อย (เช่น ลบ 40) เพื่อให้มีขอบขาวรอบรูปสวยๆ
+                    const scale = Math.min(
+                        (A4_WIDTH - 40) / imageDims.width, 
+                        (A4_HEIGHT - 40) / imageDims.height
+                    );
+                    
+                    const scaledWidth = imageDims.width * scale;
+                    const scaledHeight = imageDims.height * scale;
+                    
+                    // สร้างหน้า A4 ใหม่
+                    const page = mergedPdf.addPage([A4_WIDTH, A4_HEIGHT]);
+                    
+                    // แปะรูปลงไปตรงกลางหน้า A4
+                    page.drawImage(image, {
+                        x: (A4_WIDTH - scaledWidth) / 2,
+                        y: (A4_HEIGHT - scaledHeight) / 2,
+                        width: scaledWidth,
+                        height: scaledHeight,
+                    });
+                }
+            }
+
+            const mergedPdfBytes = await mergedPdf.save();
+
+            const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Merged_PDF_${new Date().getTime()}.pdf`; 
+            document.body.appendChild(a);
+            a.click();
+            
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            statusDiv.style.color = 'green';
+            statusDiv.textContent = 'รวมไฟล์เสร็จ หน้ากระดาษรูปภาพเท่ากันแล้ว';
+            
+        } catch (error) {
+            console.error('Error merging:', error);
+            statusDiv.style.color = 'red';
+            statusDiv.textContent = 'เกิดข้อผิดพลาดในการรวมไฟล์';
+        } finally {
+            mergeBtn.disabled = false;
+        }
+    });
+</script>
+
+</body>
+</html>
